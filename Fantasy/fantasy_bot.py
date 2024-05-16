@@ -1,6 +1,8 @@
 from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
 from telegram.ext import CommandHandler, MessageHandler, Filters, CallbackContext
 from threading import Thread
+from telegram.ext import Updater
+
 
 class FantasyBot:
     def __init__(self, token, fantasy_api):
