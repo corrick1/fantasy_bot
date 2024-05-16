@@ -1,8 +1,8 @@
 from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
-from telegram.ext import CommandHandler, MessageHandler, Filters, CallbackContext
+from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackContext
 from threading import Thread
+import time
 from telegram.ext import Updater
-
 
 class FantasyBot:
     def __init__(self, token, fantasy_api):
@@ -15,20 +15,34 @@ class FantasyBot:
         self.dispatcher.add_handler(CommandHandler("wallet", self.wallet))
         self.dispatcher.add_handler(CommandHandler("edit_wallet", self.edit_wallet))
         self.dispatcher.add_handler(CommandHandler("balance", self.balance))
-        self.dispatcher.add_handler(CommandHandler("edit_trigger", self.edit_trigger))
+        self.dispatcher.add_handler(CommandHandler("set_tracking", self.set_tracking))  # Изменено на /set_tracking
         self.dispatcher.add_handler(MessageHandler(Filters.text & ~Filters.command, self.handle_wallet))
         
         self.user_data = {}
+        self.portfolio_price_displayed = False  # Добавим флаг для отслеживания отображения текущей цены портфеля
 
     def start(self, update: Update, context: CallbackContext):
+        chat_id = update.message.chat_id
         update.message.reply_text(
             'Welcome!',
             reply_markup=self.menu_keyboard()
         )
+        # Проверяем, была ли уже выведена информация о текущей цене портфеля
+        if not self.portfolio_price_displayed:
+            update.message.reply_text('Enter your wallet address')
+            self.user_data[chat_id] = {'awaiting_wallet': True}
+        else:
+            # После успешного сохранения кошелька, запросим выбор процента триггера только если это первый раз после /wallet
+            if 'awaiting_trigger' not in self.user_data.get(chat_id, {}):
+                update.message.reply_text(
+                    'Select a percentage for further notification:',
+                    reply_markup=self.tracker_options()
+                )
+                self.user_data.setdefault(chat_id, {})['awaiting_trigger'] = True  # Добавим флаг ожидания выбора триггера
 
     def menu_keyboard(self):
         keyboard = [[KeyboardButton("/wallet"), KeyboardButton("/edit_wallet")],
-                    [KeyboardButton("/balance"), KeyboardButton("/edit_trigger")]]
+                    [KeyboardButton("/balance"), KeyboardButton("/set_tracking")]]  # Изменено на /set_tracking
         return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
 
     def wallet(self, update: Update, context: CallbackContext):
@@ -37,7 +51,11 @@ class FantasyBot:
             wallet_address = self.user_data[chat_id]['wallet_address']
             portfolio_value = self.fantasy_api.get_portfolio_value(wallet_address)
             if portfolio_value is not None:
+                # Устанавливаем флаг, что информация о текущей цене портфеля уже была выведена
+                self.portfolio_price_displayed = True
                 update.message.reply_text(f'Your current wallet: {wallet_address}\nThe current price of your portfolio: ETH {portfolio_value}')
+                # Добавляем текст о установке трекера
+                update.message.reply_text('If you want to set up a tracker: /set_tracking')
             else:
                 update.message.reply_text('Failed to get the portfolio price. Try again later.')
         else:
@@ -64,7 +82,7 @@ class FantasyBot:
         else:
             update.message.reply_text('First, specify the wallet address using the /wallet command')
 
-    def edit_trigger(self, update: Update, context: CallbackContext):
+    def set_tracking(self, update: Update, context: CallbackContext):  # Изменено на set_tracking
         chat_id = update.message.chat_id
         if chat_id in self.user_data and 'wallet_address' in self.user_data[chat_id]:
             update.message.reply_text(
@@ -86,9 +104,11 @@ class FantasyBot:
                     portfolio_value = self.fantasy_api.get_portfolio_value(wallet_address)
                     if portfolio_value is not None:
                         update.message.reply_text(
-                            f'The wallet address has been successfully saved! The current price of your portfolio: ETH {portfolio_value}',
+                            f'The wallet address has been successfully saved! The current price of your portfolio: ETH {portfolio_value}\nIf you want to set up a tracker: /set_tracking',
                             reply_markup=self.menu_keyboard()
                         )
+                        # Add awaiting_trigger flag
+                        self.user_data[chat_id]['awaiting_trigger'] = True
                     else:
                         update.message.reply_text(
                             'The wallet address was successfully saved, but failed to retrieve the portfolio price. Try again later.',
