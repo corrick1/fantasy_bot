@@ -2,10 +2,13 @@ from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
 from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackContext
 from threading import Thread
 import time
-from telegram.ext import Updater
 import threading
+import json
+import os
 
 class FantasyBot:
+    DATA_FILE = "user_data.json" # укажите путь если не работает
+
     def __init__(self, token, fantasy_api):
         self.token = token
         self.updater = Updater(token=self.token, use_context=True)
@@ -18,9 +21,19 @@ class FantasyBot:
         self.dispatcher.add_handler(CommandHandler("balance", self.balance))
         self.dispatcher.add_handler(CommandHandler("set_tracking", self.set_tracking))
         self.dispatcher.add_handler(MessageHandler(Filters.text & ~Filters.command, self.handle_wallet))
-        
-        self.user_data = {}
-        self.tracking_threads = {}  # Dictionary to store tracking threads
+
+        self.user_data = self.load_user_data()
+        self.tracking_threads = {}
+
+    def load_user_data(self):
+        if os.path.exists(self.DATA_FILE):
+            with open(self.DATA_FILE, "r") as file:
+                return json.load(file)
+        return {}
+
+    def save_user_data(self):
+        with open(self.DATA_FILE, "w") as file:
+            json.dump(self.user_data, file)
 
     def start(self, update: Update, context: CallbackContext):
         chat_id = update.message.chat_id
@@ -28,6 +41,11 @@ class FantasyBot:
             'Welcome!',
             reply_markup=self.menu_keyboard()
         )
+        if chat_id in self.user_data and 'wallet_address' in self.user_data[chat_id]:
+            update.message.reply_text(f'Your current wallet: {self.user_data[chat_id]["wallet_address"]}')
+        else:
+            update.message.reply_text('Enter your wallet address')
+            self.user_data[chat_id] = {'awaiting_wallet': True}
 
     def menu_keyboard(self):
         keyboard = [
@@ -90,7 +108,8 @@ class FantasyBot:
                 wallet_address = update.message.text.strip()
                 if len(wallet_address) == 42 and wallet_address.startswith('0x'):
                     self.user_data[chat_id]['wallet_address'] = wallet_address
-                    self.user_data[chat_id].pop('awaiting_wallet', None)  # Remove 'awaiting_wallet'
+                    self.user_data[chat_id].pop('awaiting_wallet', None)
+                    self.save_user_data()  # Save user data
                     portfolio_value = self.fantasy_api.get_portfolio_value(wallet_address)
                     if portfolio_value is not None:
                         update.message.reply_text(
@@ -109,7 +128,8 @@ class FantasyBot:
             elif 'awaiting_trigger' in self.user_data[chat_id] and self.user_data[chat_id]['awaiting_trigger']:
                 selected_option = update.message.text.strip()
                 self.user_data[chat_id]['tracker_option'] = selected_option
-                self.user_data[chat_id].pop('awaiting_trigger', None)  # Remove 'awaiting_trigger'
+                self.user_data[chat_id].pop('awaiting_trigger', None)
+                self.save_user_data()  # Save user data
                 update.message.reply_text(
                     f'Tracking mode is set to {selected_option}.',
                     reply_markup=self.menu_keyboard()
@@ -126,7 +146,6 @@ class FantasyBot:
 
         if wallet_address and tracker_option:
             if chat_id in self.tracking_threads:
-                # If tracking thread already exists, stop it
                 self.tracking_threads[chat_id].do_run = False
 
             def track():
