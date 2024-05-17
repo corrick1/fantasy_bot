@@ -3,6 +3,7 @@ from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, Callb
 from threading import Thread
 import time
 from telegram.ext import Updater
+import threading
 
 class FantasyBot:
     def __init__(self, token, fantasy_api):
@@ -116,7 +117,7 @@ class FantasyBot:
                 self.start_tracking(chat_id, context)
 
     def tracker_options(self):
-        reply_keyboard = [['3%', '5%', '10%', '20%', '30%']]
+        reply_keyboard = [['1%', '3%', '5%', '10%', '20%']]
         return ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True)
 
     def start_tracking(self, chat_id, context: CallbackContext):
