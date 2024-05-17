@@ -15,11 +15,11 @@ class FantasyBot:
         self.dispatcher.add_handler(CommandHandler("wallet", self.wallet))
         self.dispatcher.add_handler(CommandHandler("edit_wallet", self.edit_wallet))
         self.dispatcher.add_handler(CommandHandler("balance", self.balance))
-        self.dispatcher.add_handler(CommandHandler("set_tracking", self.set_tracking))  # Изменено на /set_tracking
+        self.dispatcher.add_handler(CommandHandler("set_tracking", self.set_tracking))
         self.dispatcher.add_handler(MessageHandler(Filters.text & ~Filters.command, self.handle_wallet))
         
         self.user_data = {}
-        self.portfolio_price_displayed = False  # Добавим флаг для отслеживания отображения текущей цены портфеля
+        self.tracking_threads = {}  # Dictionary to store tracking threads
 
     def start(self, update: Update, context: CallbackContext):
         chat_id = update.message.chat_id
@@ -27,22 +27,12 @@ class FantasyBot:
             'Welcome!',
             reply_markup=self.menu_keyboard()
         )
-        # Проверяем, была ли уже выведена информация о текущей цене портфеля
-        if not self.portfolio_price_displayed:
-            update.message.reply_text('Enter your wallet address')
-            self.user_data[chat_id] = {'awaiting_wallet': True}
-        else:
-            # После успешного сохранения кошелька, запросим выбор процента триггера только если это первый раз после /wallet
-            if 'awaiting_trigger' not in self.user_data.get(chat_id, {}):
-                update.message.reply_text(
-                    'Select a percentage for further notification:',
-                    reply_markup=self.tracker_options()
-                )
-                self.user_data.setdefault(chat_id, {})['awaiting_trigger'] = True  # Добавим флаг ожидания выбора триггера
 
     def menu_keyboard(self):
-        keyboard = [[KeyboardButton("/wallet"), KeyboardButton("/edit_wallet")],
-                    [KeyboardButton("/balance"), KeyboardButton("/set_tracking")]]  # Изменено на /set_tracking
+        keyboard = [
+            [KeyboardButton("/wallet"), KeyboardButton("/edit_wallet")],
+            [KeyboardButton("/balance"), KeyboardButton("/set_tracking")]
+        ]
         return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
 
     def wallet(self, update: Update, context: CallbackContext):
@@ -51,10 +41,9 @@ class FantasyBot:
             wallet_address = self.user_data[chat_id]['wallet_address']
             portfolio_value = self.fantasy_api.get_portfolio_value(wallet_address)
             if portfolio_value is not None:
-                # Устанавливаем флаг, что информация о текущей цене портфеля уже была выведена
-                self.portfolio_price_displayed = True
-                update.message.reply_text(f'Your current wallet: {wallet_address}\nThe current price of your portfolio: ETH {portfolio_value}')
-                # Добавляем текст о установке трекера
+                update.message.reply_text(
+                    f'Your current wallet: {wallet_address}\nThe current price of your portfolio: ETH {portfolio_value}'
+                )
                 update.message.reply_text('If you want to set up a tracker: /set_tracking')
             else:
                 update.message.reply_text('Failed to get the portfolio price. Try again later.')
@@ -82,7 +71,7 @@ class FantasyBot:
         else:
             update.message.reply_text('First, specify the wallet address using the /wallet command')
 
-    def set_tracking(self, update: Update, context: CallbackContext):  # Изменено на set_tracking
+    def set_tracking(self, update: Update, context: CallbackContext):
         chat_id = update.message.chat_id
         if chat_id in self.user_data and 'wallet_address' in self.user_data[chat_id]:
             update.message.reply_text(
@@ -107,7 +96,6 @@ class FantasyBot:
                             f'The wallet address has been successfully saved! The current price of your portfolio: ETH {portfolio_value}\nIf you want to set up a tracker: /set_tracking',
                             reply_markup=self.menu_keyboard()
                         )
-                        # Add awaiting_trigger flag
                         self.user_data[chat_id]['awaiting_trigger'] = True
                     else:
                         update.message.reply_text(
@@ -136,13 +124,18 @@ class FantasyBot:
         tracker_option = self.user_data[chat_id].get('tracker_option')
 
         if wallet_address and tracker_option:
+            if chat_id in self.tracking_threads:
+                # If tracking thread already exists, stop it
+                self.tracking_threads[chat_id].do_run = False
+
             def track():
+                t = threading.currentThread()
                 try:
                     previous_value = self.fantasy_api.get_portfolio_value(wallet_address)
                     if previous_value is not None:
                         self.user_data[chat_id]['previous_value'] = previous_value
 
-                        while True:
+                        while getattr(t, "do_run", True):
                             current_value = self.fantasy_api.get_portfolio_value(wallet_address)
                             if current_value and previous_value:
                                 change_percent = (abs(current_value - previous_value) / previous_value) * 100
@@ -159,3 +152,4 @@ class FantasyBot:
             tracking_thread = Thread(target=track)
             tracking_thread.daemon = True
             tracking_thread.start()
+            self.tracking_threads[chat_id] = tracking_thread
